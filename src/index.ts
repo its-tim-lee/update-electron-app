@@ -1,13 +1,15 @@
-import ms from 'ms';
-import gh from 'github-url-to-object';
+import ms from "ms";
+import type { StringValue as MsStringValue } from "ms";
+import gh from "github-url-to-object";
 
-import assert from 'node:assert';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { format } from 'node:util';
+import assert from "node:assert";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { format } from "node:util";
 
-import { app, autoUpdater, dialog, Event } from 'electron';
+import { app, autoUpdater, dialog } from "electron";
+import type { Event } from "electron";
 
 export interface ILogger {
   log(message: string): void;
@@ -29,7 +31,7 @@ export interface IElectronUpdateServiceSource {
    */
   repo?: string;
   /**
-   * @param {String} host Base HTTPS URL of the update server.
+   * @param {String} host Base URL of the update server.
    *                      Defaults to `https://update.electronjs.org`
    */
   host?: string;
@@ -115,14 +117,12 @@ export interface IUpdateElectronAppOptions<L = ILogger> {
   readonly onNotifyUser?: (info: IUpdateInfo) => void;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pkg = require('../package.json');
-const userAgent = format('%s/%s (%s: %s)', pkg.name, pkg.version, os.platform(), os.arch());
-const supportedPlatforms = ['darwin', 'win32'];
-const isHttpsUrl = (maybeURL: string) => {
+const supportedPlatforms = ["darwin", "win32"];
+const isValidUrl = (maybeURL: string) => {
   try {
-    const { protocol } = new URL(maybeURL);
-    return protocol === 'https:';
+    // eslint-disable-next-line no-new
+    new URL(maybeURL);
+    return true;
   } catch {
     return false;
   }
@@ -132,22 +132,10 @@ export function updateElectronApp(opts: IUpdateElectronAppOptions = {}) {
   // check for bad input early, so it will be logged during development
   const safeOpts = validateInput(opts);
 
-  // don't attempt to update during development
-  if (!app.isPackaged) {
-    const message =
-      'update-electron-app config looks good; aborting updates since app is in development mode';
-    if (opts.logger) {
-      opts.logger.log(message);
-    } else {
-      console.log(message);
-    }
-    return;
-  }
-
   if (app.isReady()) {
     initUpdater(safeOpts);
   } else {
-    app.on('ready', () => initUpdater(safeOpts));
+    app.on("ready", () => initUpdater(safeOpts));
   }
 }
 
@@ -163,7 +151,7 @@ function initUpdater(opts: ReturnType<typeof validateInput>) {
   }
 
   let feedURL: string;
-  let serverType: 'default' | 'json' = 'default';
+  let serverType: "default" | "json" = "default";
   switch (updateSource.type) {
     case UpdateSourceType.ElectronPublicUpdateService: {
       feedURL = `${updateSource.host}/${updateSource.repo}/${process.platform}-${
@@ -172,62 +160,78 @@ function initUpdater(opts: ReturnType<typeof validateInput>) {
       break;
     }
     case UpdateSourceType.StaticStorage: {
-      feedURL = updateSource.baseUrl;
-      if (process.platform === 'darwin') {
-        feedURL += '/RELEASES.json';
-        serverType = 'json';
+      // Normalize trailing slashes so appending "/RELEASES.json" never creates "//RELEASES.json".
+      feedURL = updateSource.baseUrl.replace(/\/+$/, "");
+      if (process.platform === "darwin") {
+        feedURL += "/RELEASES.json";
+        serverType = "json";
       }
       break;
     }
   }
 
-  const requestHeaders = { 'User-Agent': userAgent };
+  const userAgent = format(
+    "%s/%s (%s: %s)",
+    app.name,
+    app.getVersion(),
+    os.platform(),
+    os.arch(),
+  );
+  const requestHeaders = { "User-Agent": userAgent };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function log(...args: any[]) {
     logger.log(...args);
   }
 
-  log('feedURL', feedURL);
-  log('requestHeaders', requestHeaders);
+  log("feedURL", feedURL);
+  log("requestHeaders", requestHeaders);
   autoUpdater.setFeedURL({
     url: feedURL,
     headers: requestHeaders,
     serverType,
   });
 
-  autoUpdater.on('error', (err) => {
-    log('updater error');
+  autoUpdater.on("error", (err) => {
+    log("updater error");
     log(err);
   });
 
-  autoUpdater.on('checking-for-update', () => {
-    log('checking-for-update');
+  autoUpdater.on("checking-for-update", () => {
+    log("checking-for-update");
   });
 
-  autoUpdater.on('update-available', () => {
-    log('update-available; downloading...');
+  autoUpdater.on("update-available", () => {
+    log("update-available; downloading...");
   });
 
-  autoUpdater.on('update-not-available', () => {
-    log('update-not-available');
+  autoUpdater.on("update-not-available", () => {
+    log("update-not-available");
   });
 
   if (opts.notifyUser) {
     autoUpdater.on(
-      'update-downloaded',
+      "update-downloaded",
       (event, releaseNotes, releaseName, releaseDate, updateURL) => {
-        log('update-downloaded', [event, releaseNotes, releaseName, releaseDate, updateURL]);
+        log("update-downloaded", [
+          event,
+          releaseNotes,
+          releaseName,
+          releaseDate,
+          updateURL,
+        ]);
 
-        if (typeof opts.onNotifyUser !== 'function') {
+        if (typeof opts.onNotifyUser !== "function") {
           assert(
             opts.onNotifyUser === undefined,
-            'onNotifyUser option must be a callback function or undefined',
+            "onNotifyUser option must be a callback function or undefined",
           );
-          log('update-downloaded: notifyUser is true, opening default dialog');
+          log("update-downloaded: notifyUser is true, opening default dialog");
           opts.onNotifyUser = makeUserNotifier();
         } else {
-          log('update-downloaded: notifyUser is true, running custom onNotifyUser callback');
+          log(
+            "update-downloaded: notifyUser is true, running custom onNotifyUser callback",
+          );
         }
 
         opts.onNotifyUser({
@@ -253,25 +257,29 @@ function initUpdater(opts: ReturnType<typeof validateInput>) {
  *
  * @param dialogProps - Text to display in the dialog.
  */
-export function makeUserNotifier(dialogProps?: IUpdateDialogStrings): (info: IUpdateInfo) => void {
+export function makeUserNotifier(
+  dialogProps?: IUpdateDialogStrings,
+): (info: IUpdateInfo) => void {
   const defaultDialogMessages = {
-    title: 'Application Update',
-    detail: 'A new version has been downloaded. Restart the application to apply the updates.',
-    restartButtonText: 'Restart',
-    laterButtonText: 'Later',
+    title: "Application Update",
+    detail:
+      "A new version has been downloaded. Restart the application to apply the updates.",
+    restartButtonText: "Restart",
+    laterButtonText: "Later",
   };
 
   const assignedDialog = Object.assign({}, defaultDialogMessages, dialogProps);
 
   return (info: IUpdateInfo) => {
     const { releaseNotes, releaseName } = info;
-    const { title, restartButtonText, laterButtonText, detail } = assignedDialog;
+    const { title, restartButtonText, laterButtonText, detail } =
+      assignedDialog;
 
     const dialogOpts: Electron.MessageBoxOptions = {
-      type: 'info',
+      type: "info",
       buttons: [restartButtonText, laterButtonText],
       title,
-      message: process.platform === 'win32' ? releaseNotes : releaseName,
+      message: process.platform === "win32" ? releaseNotes : releaseName,
       detail,
     };
 
@@ -284,27 +292,27 @@ export function makeUserNotifier(dialogProps?: IUpdateDialogStrings): (info: IUp
 }
 
 function guessRepo() {
-  const pkgBuf = fs.readFileSync(path.join(app.getAppPath(), 'package.json'));
+  const pkgBuf = fs.readFileSync(path.join(app.getAppPath(), "package.json"));
   const pkg = JSON.parse(pkgBuf.toString());
   const repoString = pkg.repository?.url || pkg.repository;
   const repoObject = gh(repoString);
-  assert(repoObject, "repo not found. Add repository string to your app's package.json file");
+  assert(
+    repoObject,
+    "repo not found. Add repository string to your app's package.json file",
+  );
   return `${repoObject.user}/${repoObject.repo}`;
 }
 
 function validateInput(opts: IUpdateElectronAppOptions) {
   const defaults = {
-    host: 'https://update.electronjs.org',
-    updateInterval: '10 minutes',
+    host: "https://update.electronjs.org",
+    updateInterval: "10 minutes",
     logger: console,
     notifyUser: true,
   };
 
-  const { host, updateInterval, logger, notifyUser, onNotifyUser } = Object.assign(
-    {},
-    defaults,
-    opts,
-  );
+  const { host, updateInterval, logger, notifyUser, onNotifyUser } =
+    Object.assign({}, defaults, opts);
 
   let updateSource = opts.updateSource;
   // Handle migration from old properties + default to update service
@@ -319,35 +327,51 @@ function validateInput(opts: IUpdateElectronAppOptions) {
   switch (updateSource.type) {
     case UpdateSourceType.ElectronPublicUpdateService: {
       assert(
-        updateSource.repo?.includes('/'),
-        'repo is required and should be in the format `owner/repo`',
+        updateSource.repo?.includes("/"),
+        "repo is required and should be in the format `owner/repo`",
       );
 
       if (!updateSource.host) {
         updateSource.host = host;
       }
 
-      assert(updateSource.host && isHttpsUrl(updateSource.host), 'host must be a valid HTTPS URL');
+      assert(
+        updateSource.host && isValidUrl(updateSource.host),
+        "host must be a valid URL",
+      );
       break;
     }
     case UpdateSourceType.StaticStorage: {
       assert(
-        updateSource.baseUrl && isHttpsUrl(updateSource.baseUrl),
-        'baseUrl must be a valid HTTPS URL',
+        updateSource.baseUrl && isValidUrl(updateSource.baseUrl),
+        "baseUrl must be a valid URL",
       );
       break;
     }
   }
 
   assert(
-    typeof updateInterval === 'string' && updateInterval.match(/^\d+/),
-    'updateInterval must be a human-friendly string interval like `20 minutes`',
+    typeof updateInterval === "string" && updateInterval.match(/^\d+/),
+    "updateInterval must be a human-friendly string interval like `20 minutes`",
+  );
+  const normalizedUpdateInterval = updateInterval as MsStringValue;
+
+  assert(
+    ms(normalizedUpdateInterval) >= 5 * 60 * 1000,
+    "updateInterval must be `5 minutes` or more",
+  );
+  assert(
+    ms(normalizedUpdateInterval) < 2 ** 31,
+    "updateInterval must fit in a signed 32-bit integer",
   );
 
-  assert(ms(updateInterval) >= 5 * 60 * 1000, 'updateInterval must be `5 minutes` or more');
-  assert(ms(updateInterval) < 2 ** 31, 'updateInterval must fit in a signed 32-bit integer');
+  assert(logger && typeof logger.log, "function");
 
-  assert(logger && typeof logger.log, 'function');
-
-  return { updateSource, updateInterval, logger, notifyUser, onNotifyUser };
+  return {
+    updateSource,
+    updateInterval: normalizedUpdateInterval,
+    logger,
+    notifyUser,
+    onNotifyUser,
+  };
 }
