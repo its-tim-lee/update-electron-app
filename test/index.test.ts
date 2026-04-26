@@ -15,9 +15,22 @@ const repo = 'some-owner/some-repo';
 
 beforeEach(() => {
   jest.useFakeTimers();
+  jest.clearAllMocks();
 });
 
 describe('updateElectronApp', () => {
+  const staticUpdateSource = {
+    type: UpdateSourceType.StaticStorage,
+    baseUrl: 'http://example.com/updates',
+  } as const;
+
+  const makeLogger = () => ({
+    log: jest.fn(),
+    info: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+  });
+
   it('is a function', () => {
     expect(typeof updateElectronApp).toBe('function');
   });
@@ -50,10 +63,10 @@ describe('updateElectronApp', () => {
   });
 
   describe('host', () => {
-    it('must a valid HTTPS URL', () => {
+    it('must be a valid URL', () => {
       expect(() => {
-        updateElectronApp({ repo, host: 'http://example.com' });
-      }).toThrow('host must be a valid HTTPS URL');
+        updateElectronApp({ repo, host: 'not-a-url' });
+      }).toThrow('host must be a valid URL');
     });
 
     it('from default', () => {
@@ -73,6 +86,76 @@ describe('updateElectronApp', () => {
       }).toThrow('updateInterval must be `5 minutes` or more');
     });
   });
+
+  describe('simulateUpdateDownloaded', () => {
+    it('opens the default dialog with default update info and skips quitAndInstall', async () => {
+      const logger = makeLogger();
+      jest
+        .mocked(dialog.showMessageBox)
+        .mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+
+      updateElectronApp({
+        logger,
+        updateSource: staticUpdateSource,
+        simulateUpdateDownloaded: true,
+      });
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1000);
+
+      expect(dialog.showMessageBox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Application Update',
+          message: 'TestApp v1.2.3',
+        }),
+      );
+
+      await Promise.resolve();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(logger.log).toHaveBeenCalledWith(
+        'simulateUpdateDownloaded: restart requested; skipping autoUpdater.quitAndInstall()',
+      );
+    });
+
+    it('passes default update info to a custom notifier after the configured delay', () => {
+      const logger = makeLogger();
+      const onNotifyUser = jest.fn();
+
+      updateElectronApp({
+        logger,
+        onNotifyUser,
+        updateSource: staticUpdateSource,
+        simulateUpdateDownloaded: {
+          delayMs: 25,
+        },
+      });
+
+      jest.advanceTimersByTime(24);
+      expect(onNotifyUser).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1);
+      expect(onNotifyUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          releaseNotes: 'A simulated update has been downloaded.',
+          releaseName: 'TestApp v1.2.3',
+          updateURL: 'http://example.com/updates/RELEASES.json',
+        }),
+      );
+    });
+
+    it('validates delayMs', () => {
+      expect(() => {
+        updateElectronApp({
+          repo,
+          simulateUpdateDownloaded: {
+            delayMs: -1,
+          },
+        });
+      }).toThrow('simulateUpdateDownloaded.delayMs must be a non-negative number');
+    });
+  });
 });
 
 describe('makeUserNotifier', () => {
@@ -86,6 +169,7 @@ describe('makeUserNotifier', () => {
 
   beforeEach(() => {
     jest.mocked(dialog.showMessageBox).mockReset();
+    jest.mocked(autoUpdater.quitAndInstall).mockReset();
   });
 
   it('is a function that returns a callback function', () => {
@@ -97,19 +181,22 @@ describe('makeUserNotifier', () => {
     it.each([
       ['does', 0, 1],
       ['does not', 1, 0],
-    ])('%s call autoUpdater.quitAndInstall if the user responds with %i', (_, response, called) => {
-      jest
-        .mocked(dialog.showMessageBox)
-        .mockResolvedValueOnce({ response, checkboxChecked: false });
-      const notifier = makeUserNotifier();
-      notifier(fakeUpdateInfo);
+    ])(
+      '%s call autoUpdater.quitAndInstall if the user responds with %i',
+      async (_, response, called) => {
+        jest
+          .mocked(dialog.showMessageBox)
+          .mockResolvedValueOnce({ response, checkboxChecked: false });
+        const notifier = makeUserNotifier();
+        notifier(fakeUpdateInfo);
 
-      expect(dialog.showMessageBox).toHaveBeenCalled();
-      // quitAndInstall is only called after the showMessageBox promise resolves
-      process.nextTick(() => {
+        expect(dialog.showMessageBox).toHaveBeenCalled();
+
+        await Promise.resolve();
+
         expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(called);
-      });
-    });
+      },
+    );
   });
 
   it('can customize dialog properties', () => {

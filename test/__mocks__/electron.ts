@@ -2,28 +2,21 @@ import os from 'node:os';
 
 module.exports = {
   app: {
+    name: 'TestApp',
     getVersion: () => {
       return '1.2.3';
     },
     isReady: () => true,
-    on: () => {
-      /* no-op */
-    },
+    on: jest.fn(),
     getAppPath: () => {
       return os.tmpdir();
     },
     isPackaged: true,
   },
   autoUpdater: {
-    checkForUpdates: () => {
-      /* no-op */
-    },
-    on: () => {
-      /* no-op */
-    },
-    setFeedURL: () => {
-      /* no-op */
-    },
+    checkForUpdates: jest.fn(),
+    on: jest.fn(),
+    setFeedURL: jest.fn(),
     quitAndInstall: jest.fn(),
   },
   dialog: {
