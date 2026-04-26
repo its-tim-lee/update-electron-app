@@ -343,7 +343,7 @@ function makeSimulatedUpdateInfo(feedURL: string): IUpdateInfo {
   return {
     event: {} as Event,
     releaseNotes: 'A simulated update has been downloaded.',
-    releaseName: `${appName} v${app.getVersion()}`,
+    releaseName: `${appName}`,
     releaseDate: new Date(),
     updateURL: feedURL,
   };
